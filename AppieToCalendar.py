@@ -104,7 +104,7 @@ def syncCalendar(userName, password):
 
         #add properties to event
         event.add('summary', 'Werken')
-        event.add('description', 'Je moet werken, homo')
+        #event.add('description', 'Je moet werken')
         event.add
         event.add('dtstart', i[0])
         event.add('dtend', i[1])
