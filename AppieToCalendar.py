@@ -11,6 +11,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.options import Options
 import time
 from dateutil.relativedelta import relativedelta
+from selenium.common.exceptions import UnexpectedAlertPresentException
 
 #GUI imports
 import tkinter as tk
@@ -46,9 +47,12 @@ def exportToIcalendar(items):
     f.write(cal.to_ical())
     f.close()
 
-def syncCalendar(userName, password):
+def syncCalendar(userName, password, statusLabel):
+    statusLabel.config(text="Bezig (duurt maximaal 1 minuut)...")
+    screen.update()
+
     data = importData()
-    
+
     # >>> Put chromedriver path here <<<
     chromeDriverPath = "/opt/homebrew/bin/chromedriver"
 
@@ -59,16 +63,22 @@ def syncCalendar(userName, password):
     driver.get("https://sam.ahold.com")
     
     #Don't question this, without it it doesn't work sometimes
-    time.sleep(1)
 
     #Goes to the right page (Login > Main page > schedule page)
+    while len(driver.find_elements(By.XPATH, "/html/body/div/main/div[2]/div[2]/div/div/div/div/div/div/div[2]/form/div[1]/div[1]/div/input")) == 0:
+        time.sleep(0.2)
     passwordInputBox = driver.find_element(By.XPATH, "/html/body/div/main/div[2]/div[2]/div/div/div/div/div/div/div[2]/form/div[1]/div[1]/div/input")
     passwordInputBox.send_keys(userName.get())
     passwordInputBox = driver.find_element(By.XPATH, "/html/body/div/main/div[2]/div[2]/div/div/div/div/div/div/div[2]/form/div[1]/div[2]/div/input")
     passwordInputBox.send_keys(password.get())
-    driver.find_element(By.XPATH, "/html/body/div/main/div[2]/div[2]/div/div/div/div/div/div/div[2]/form/div[2]/div/div/input").click()
-    driver.get("https://sam.ahold.com/wrkbrn_jct/etm/etmMenu.jsp?locale=nl_NL")
-    driver.find_element(By.XPATH, "/html/body/form/table/tbody/tr/td/table[2]/tbody/tr/td/center/table/tbody/tr/td[1]/table/tbody/tr").click()
+    try:
+        driver.find_element(By.XPATH, "/html/body/div/main/div[2]/div[2]/div/div/div/div/div/div/div[2]/form/div[2]/div/div/input").click()
+        driver.get("https://sam.ahold.com/wrkbrn_jct/etm/etmMenu.jsp?locale=nl_NL")
+        if len(driver.find_elements(By.XPATH, "/html/body/form/table/tbody/tr/td/table[2]/tbody/tr/td/center/table/tbody/tr/td[1]/table/tbody/tr")) == 0:
+            popup("Incorrecte gebruikersnaam/wachtwoord ingevuld!")
+        driver.find_element(By.XPATH, "/html/body/form/table/tbody/tr/td/table[2]/tbody/tr/td/center/table/tbody/tr/td[1]/table/tbody/tr").click()
+    except UnexpectedAlertPresentException:
+        popup("Geen gebruikersnaam/wachtwoord ingevuld!")
 
     #Scans for planned work times and adds them to list
     newItems = []
@@ -109,8 +119,8 @@ def syncCalendar(userName, password):
     for item in newItems:
         data["savedTimes"].append([str(item[0]), str(item[1])])
     saveData(data)
-    
-    tk.Label(text="Ik heb {} werktijden gevonden!".format(len(newItems))).grid(row = 4, column = 0, columnspan = 2)
+
+    statusLabel.config(text="Heb {} nieuwe werktijden gevonden".format(len(newItems)))
 
 def clearScreen():
     for widget in screen.winfo_children():
@@ -127,11 +137,14 @@ def syncCalendarGUI():
     userNameEntry.grid(row = 1, column = 1)
 
     tk.Label(text="Password").grid(row = 2, column = 0)
-    passwordEntry = tk.Entry()
+    passwordEntry = tk.Entry(show="*")
     passwordEntry.grid(row = 2, column = 1)
 
+    statusLabel = tk.Label(text="")
+    statusLabel.grid(row = 4, column = 0, columnspan = 2)
+
     #Passes userName and password for use during the scraping
-    tk.Button(text="Exporteer appie rooster", command=lambda:syncCalendar(userNameEntry, passwordEntry)).grid(row = 3, column = 0, columnspan= 2)
+    tk.Button(text="Exporteer appie rooster", command=lambda:syncCalendar(userNameEntry, passwordEntry, statusLabel)).grid(row = 3, column = 0, columnspan= 2)
 
 def popup(message):
     popupScreen = tk.Toplevel()
@@ -195,14 +208,59 @@ def manuallyAddWorkTime():
 
     tk.Button(text="Exporteer nieuwe tijden naar agenda", command=lambda:exportToIcalendar(newData)).grid(row = 6, column = 0, columnspan=2)
 
+def Statistics():
+    clearScreen()
+
+    data = importData()
+
+    tk.Button(text="Terug", command=mainScreen).grid(row = 0, column = 0)
+    tk.Label(text="Statistieken").grid(row = 0, column = 1)
+
+    timeData = {}
+    for item in data["savedTimes"]:
+        dateTimeDifference = str(datetime(2000, 1, 1, int(item[1].split(" ")[1].split(":")[0]), int(item[1].split(" ")[1].split(":")[1]), 0) - datetime(2000, 1, 1, int(item[0].split(" ")[1].split(":")[0]), int(item[0].split(" ")[1].split(":")[1]), 0))
+        minuteDifference = int(dateTimeDifference.split(":")[0]) * 60 + int(dateTimeDifference.split(":")[1])
+        if item[0].split("-")[0] not in timeData.keys() or item[0].split("-")[1] not in timeData[item[0].split("-")[0]].keys():
+            if item[0].split("-")[0] not in timeData.keys():
+                timeData[item[0].split("-")[0]] = {}
+            timeData[item[0].split("-")[0]][item[0].split("-")[1]] = minuteDifference
+        else:
+             timeData[item[0].split("-")[0]][item[0].split("-")[1]] += minuteDifference
+    print(timeData)
+
+    tk.Button(text="uur grafiek", command=lambda:showWorkGraph(timeData)).grid(row = 1, column = 0)
+
+def showWorkGraph(timeData):
+    import matplotlib.pyplot as plt
+
+    yearList = list(timeData.keys())
+    yearList.sort()
+
+    yAxis = []
+    xAxis = []
+    for year in yearList:
+        newMonthList = list(timeData[year].keys())
+        newMonthList.sort()
+
+        for month in newMonthList:
+            yAxis.append(timeData[year][month])
+            xAxis.append(year + "-" + month)
+    
+
+
+
+    plt.plot(xAxis,yAxis, color='maroon', marker='o')
+    plt.show()
+
 def mainScreen():
     #Initiate main menu GUI
     clearScreen()
     tk.Button(text="Automatisch rooster ophalen", command=lambda:syncCalendarGUI()).pack()
     tk.Button(text="Zelf werktijd(en) invullen", command=lambda:manuallyAddWorkTime()).pack()
+    tk.Button(text="Statistieken", command=lambda:Statistics()).pack()
 
 screen = tk.Tk()
-screen.title("Appie to Calendar V0.2")
+screen.title("Appie to Calendar V0.3")
 screen.resizable(False, False) 
 mainScreen()
 screen.mainloop()
