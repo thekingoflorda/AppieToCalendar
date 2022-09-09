@@ -47,7 +47,7 @@ def exportToIcalendar(items):
     f.write(cal.to_ical())
     f.close()
 
-def syncCalendar(userName, password, statusLabel):
+def syncCalendar(userName, password, statusLabel, monthsToGoBack):
     statusLabel.config(text="Bezig (duurt maximaal 1 minuut)...")
     screen.update()
 
@@ -93,6 +93,31 @@ def syncCalendar(userName, password, statusLabel):
             newItem.append(datetime(datetime.now().year, datetime.now().month, int(item.text.split("\n")[0]), int(parsedTime.split(":")[0]), int(parsedTime.split(":")[1])))
             if [str(newItem[0]), str(newItem[1])] not in data["savedTimes"]:
                 newItems.append(newItem)
+    
+    oldTimes = []
+
+    try:
+        if int(monthsToGoBack.get()) >= 0:
+            for i in range(int(monthsToGoBack.get()) + 1):
+                schedule = driver.find_elements(By.CLASS_NAME, "calendarCellRegularPast")
+                for enum, item in enumerate(schedule):
+                    if enum % 2 == 0:
+                        parsedTime = item.text.split("\n")[1].split("-")[0].replace("(", "")
+                        newItem = []
+                        print(int(item.text.split("\n")[0]))
+                        newItem.append(datetime(datetime.now().year, 1, int(item.text.split("\n")[0]), int(parsedTime.split(":")[0]), int(parsedTime.split(":")[1])) + relativedelta(months = datetime.now().month - i - 1))
+                        parsedTime = item.text.split("\n")[1].split("-")[1].replace(")", "")
+                        newItem.append(datetime(datetime.now().year, 1, int(item.text.split("\n")[0]), int(parsedTime.split(":")[0]), int(parsedTime.split(":")[1])) + relativedelta(months = datetime.now().month - i - 1))
+                        if [str(newItem[0]), str(newItem[1])] not in data["savedTimes"]:
+                            oldTimes.append(newItem)
+                driver.find_element(By.XPATH, "/html/body/form/table/tbody/tr[2]/td/table/tbody/tr/td[1]/table/tbody/tr").click()
+            
+            for i in range(int(monthsToGoBack.get()) + 1):
+                driver.find_element(By.XPATH, "/html/body/form/table/tbody/tr[2]/td/table/tbody/tr/td[2]/table/tbody/tr/td[2]/span").click()
+        else:
+            popup(monthsToGoBack.get() + " is niet een correct getal.")
+    except ValueError:
+        popup(monthsToGoBack.get() + " is niet een correct getal.")
 
     #Pushes button to go to next month
     driver.find_element(By.XPATH, "/html/body/form/table/tbody/tr[2]/td/table/tbody/tr/td[2]/table/tbody/tr/td[2]/span").click()
@@ -104,9 +129,9 @@ def syncCalendar(userName, password, statusLabel):
         if enum % 2 == 0:
             newItem = []
             parsedTime = item.text.split("\n")[1].split("-")[0].replace("(", "")
-            newItem.append(datetime(datetime.now().year, datetime.now().month, int(item.text.split("\n")[0]), int(parsedTime.split(":")[0]), int(parsedTime.split(":")[1]))+ relativedelta(months=1))
+            newItem.append(datetime(datetime.now().year, datetime.now().month, int(item.text.split("\n")[0]), int(parsedTime.split(":")[0]), int(parsedTime.split(":")[1])) + relativedelta(months = 1))
             parsedTime = item.text.split("\n")[1].split("-")[1].replace(")", "")
-            newItem.append(datetime(datetime.now().year, datetime.now().month, int(item.text.split("\n")[0]), int(parsedTime.split(":")[0]), int(parsedTime.split(":")[1]))+ relativedelta(months=1))
+            newItem.append(datetime(datetime.now().year, datetime.now().month, int(item.text.split("\n")[0]), int(parsedTime.split(":")[0]), int(parsedTime.split(":")[1])) + relativedelta(months = 1))
             if [str(newItem[0]), str(newItem[1])] not in data["savedTimes"]:
                 newItems.append(newItem)
     
@@ -118,9 +143,12 @@ def syncCalendar(userName, password, statusLabel):
     #Adds saved timestamps to json to prevent duplicate exports and enable work statistics
     for item in newItems:
         data["savedTimes"].append([str(item[0]), str(item[1])])
+
+    for item in oldTimes:
+        data["savedTimes"].append([str(item[0]), str(item[1])])
     saveData(data)
 
-    statusLabel.config(text="Heb {} nieuwe werktijden gevonden".format(len(newItems)))
+    statusLabel.config(text="Heb {} nieuwe en {} oude werktijden gevonden".format(len(newItems), len(oldTimes)))
 
 def clearScreen():
     for widget in screen.winfo_children():
@@ -140,11 +168,16 @@ def syncCalendarGUI():
     passwordEntry = tk.Entry(show="*")
     passwordEntry.grid(row = 2, column = 1)
 
+    tk.Label(text="Hoeveelheid verleden maanden ophalen").grid(row = 3, column = 0)
+    monthsToGoBack = tk.Entry()
+    monthsToGoBack.grid(row = 3, column=1)
+    monthsToGoBack.insert(0, "5")
+
     statusLabel = tk.Label(text="")
-    statusLabel.grid(row = 4, column = 0, columnspan = 2)
+    statusLabel.grid(row = 5, column = 0, columnspan = 2)
 
     #Passes userName and password for use during the scraping
-    tk.Button(text="Exporteer appie rooster", command=lambda:syncCalendar(userNameEntry, passwordEntry, statusLabel)).grid(row = 3, column = 0, columnspan= 2)
+    tk.Button(text="Exporteer appie rooster", command=lambda:syncCalendar(userNameEntry, passwordEntry, statusLabel, monthsToGoBack)).grid(row = 4, column = 0, columnspan= 2)
 
 def popup(message):
     popupScreen = tk.Toplevel()
@@ -216,6 +249,7 @@ def Statistics():
     tk.Button(text="Terug", command=mainScreen).grid(row = 0, column = 0)
     tk.Label(text="Statistieken").grid(row = 0, column = 1)
 
+    totalTime = 0
     timeData = {}
     for item in data["savedTimes"]:
         dateTimeDifference = str(datetime(2000, 1, 1, int(item[1].split(" ")[1].split(":")[0]), int(item[1].split(" ")[1].split(":")[1]), 0) - datetime(2000, 1, 1, int(item[0].split(" ")[1].split(":")[0]), int(item[0].split(" ")[1].split(":")[1]), 0))
@@ -223,12 +257,16 @@ def Statistics():
         if item[0].split("-")[0] not in timeData.keys() or item[0].split("-")[1] not in timeData[item[0].split("-")[0]].keys():
             if item[0].split("-")[0] not in timeData.keys():
                 timeData[item[0].split("-")[0]] = {}
-            timeData[item[0].split("-")[0]][item[0].split("-")[1]] = minuteDifference
+            timeData[item[0].split("-")[0]][item[0].split("-")[1]] = minuteDifference / 60
         else:
-             timeData[item[0].split("-")[0]][item[0].split("-")[1]] += minuteDifference
+             timeData[item[0].split("-")[0]][item[0].split("-")[1]] += minuteDifference / 60
+        totalTime += minuteDifference / 60
     print(timeData)
 
-    tk.Button(text="uur grafiek", command=lambda:showWorkGraph(timeData)).grid(row = 1, column = 0)
+    tk.Label(text="Totaal gewerkte uren: " + str(totalTime)).grid(row = 1, column = 0, columnspan = 2)
+    #tk.Label(text="Totaal uitbetaalde uren: ")
+
+    tk.Button(text="uur grafiek", command=lambda:showWorkGraph(timeData)).grid(row = 2, column = 0)
 
 def showWorkGraph(timeData):
     import matplotlib.pyplot as plt
@@ -246,9 +284,9 @@ def showWorkGraph(timeData):
             yAxis.append(timeData[year][month])
             xAxis.append(year + "-" + month)
     
-
-
-
+    plt.title("Hoeveelheid gewerkt bij de appie")
+    plt.xlabel("Tijd")
+    plt.ylabel("Aantal gewerkte uren")
     plt.plot(xAxis,yAxis, color='maroon', marker='o')
     plt.show()
 
@@ -260,7 +298,7 @@ def mainScreen():
     tk.Button(text="Statistieken", command=lambda:Statistics()).pack()
 
 screen = tk.Tk()
-screen.title("Appie to Calendar V0.3")
+screen.title("Appie to Calendar V0.4")
 screen.resizable(False, False) 
 mainScreen()
 screen.mainloop()
