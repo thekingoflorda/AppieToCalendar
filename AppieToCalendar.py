@@ -1,7 +1,11 @@
 #Time/calendar imports
+from dataclasses import dataclass
+import enum
+from itertools import count
 from re import I
 import string
 from tokenize import String
+from turtle import clear
 from icalendar import Calendar, Event
 from datetime import date, datetime
 
@@ -11,13 +15,35 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.options import Options
 import time
 from dateutil.relativedelta import relativedelta
-from selenium.common.exceptions import UnexpectedAlertPresentException
+import selenium.common.exceptions
 
 #GUI imports
 import tkinter as tk
-
+from tkinter import ttk 
 #Data imports
 import json
+
+class ScrollableFrame(ttk.Frame):
+    global background_color
+    def __init__(self, container, borderwidth_in, frame_size, *args, **kwargs):
+        super().__init__(container, *args, **kwargs)
+        self.canvas = tk.Canvas(self, width = frame_size[0], height = frame_size[1], borderwidth = borderwidth_in)
+        scrollbar_y = tk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
+        scrollbar_x = tk.Scrollbar(self, orient="horizontal", command=self.canvas.xview)
+        self.scrollable_frame = tk.Frame(self.canvas)
+        self.scrollable_frame.bind("<Configure>", lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
+        self.canvas.create_window((0, 0), window=self.scrollable_frame, anchor="nw")
+        self.canvas.configure(yscrollcommand=scrollbar_y.set, xscrollcommand=scrollbar_x.set)
+        self.canvas.grid(sticky="e", row = 0, column = 0)
+        self.canvas.bind_all("<MouseWheel>", self._on_mousewheel)
+        scrollbar_y.grid(row=0, column=1, sticky='ns')
+        scrollbar_x.grid(row=1, column=0, sticky='we')
+    
+    def _on_mousewheel(self, event):
+        self.canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+
+    def move_down(self):
+        self.canvas.yview_moveto(1)
 
 def importData():
     with open("data.json", "r") as jsonFile:
@@ -47,11 +73,17 @@ def exportToIcalendar(items):
     f.write(cal.to_ical())
     f.close()
 
-def syncCalendar(userName, password, statusLabel, monthsToGoBack):
+def syncCalendar(userName, password, statusLabel, monthsToGoBack, deleteSavedTimes):
+
     statusLabel.config(text="Bezig (duurt maximaal 1 minuut)...")
     screen.update()
 
-    data = importData()
+    if deleteSavedTimes.get() == 0:
+        data = importData()
+    else:
+        data = {"savedTimes": []}
+
+    print("blup")
 
     # >>> Put chromedriver path here <<<
     chromeDriverPath = "/opt/homebrew/bin/chromedriver"
@@ -60,13 +92,19 @@ def syncCalendar(userName, password, statusLabel, monthsToGoBack):
     options = Options()
     options.add_argument('--headless')
     driver = webdriver.Chrome(chromeDriverPath, chrome_options=options)
-    driver.get("https://sam.ahold.com")
-    
-    #Don't question this, without it it doesn't work sometimes
+    try:
+        driver.get("https://sam.ahold.com")
+    except selenium.common.exceptions.WebDriverException:
+        popup("Geen internet connectie!")
 
+    print("Driver innitiated")
     #Goes to the right page (Login > Main page > schedule page)
-    while len(driver.find_elements(By.XPATH, "/html/body/div/main/div[2]/div[2]/div/div/div/div/div/div/div[2]/form/div[1]/div[1]/div/input")) == 0:
+    timeOutCounter = 0
+    while len(driver.find_elements(By.XPATH, "/html/body/div/main/div[2]/div[2]/div/div/div/div/div/div/div[2]/form/div[1]/div[1]/div/input")) == 0 and timeOutCounter <= 50:
         time.sleep(0.2)
+        timeOutCounter += 1
+        if timeOutCounter > 50:
+            popup("Timeout terwijl browser werd opgestart.")
     passwordInputBox = driver.find_element(By.XPATH, "/html/body/div/main/div[2]/div[2]/div/div/div/div/div/div/div[2]/form/div[1]/div[1]/div/input")
     passwordInputBox.send_keys(userName.get())
     passwordInputBox = driver.find_element(By.XPATH, "/html/body/div/main/div[2]/div[2]/div/div/div/div/div/div/div[2]/form/div[1]/div[2]/div/input")
@@ -77,8 +115,9 @@ def syncCalendar(userName, password, statusLabel, monthsToGoBack):
         if len(driver.find_elements(By.XPATH, "/html/body/form/table/tbody/tr/td/table[2]/tbody/tr/td/center/table/tbody/tr/td[1]/table/tbody/tr")) == 0:
             popup("Incorrecte gebruikersnaam/wachtwoord ingevuld!")
         driver.find_element(By.XPATH, "/html/body/form/table/tbody/tr/td/table[2]/tbody/tr/td/center/table/tbody/tr/td[1]/table/tbody/tr").click()
-    except UnexpectedAlertPresentException:
+    except selenium.common.exceptions.UnexpectedAlertPresentException:
         popup("Geen gebruikersnaam/wachtwoord ingevuld!")
+    print("Username succesfully entered")
 
     #Scans for planned work times and adds them to list
     newItems = []
@@ -93,6 +132,7 @@ def syncCalendar(userName, password, statusLabel, monthsToGoBack):
             newItem.append(datetime(datetime.now().year, datetime.now().month, int(item.text.split("\n")[0]), int(parsedTime.split(":")[0]), int(parsedTime.split(":")[1])))
             if [str(newItem[0]), str(newItem[1])] not in data["savedTimes"]:
                 newItems.append(newItem)
+    print("Scan completed")
     
     oldTimes = []
 
@@ -173,11 +213,15 @@ def syncCalendarGUI():
     monthsToGoBack.grid(row = 3, column=1)
     monthsToGoBack.insert(0, "5")
 
+    deleteSavedTimes = tk.IntVar()
+    tk.Checkbutton(text="Verwijder opgeslagen werk tijden", variable=deleteSavedTimes).grid(row = 4, column = 0, columnspan=2)
+
+    
     statusLabel = tk.Label(text="")
-    statusLabel.grid(row = 5, column = 0, columnspan = 2)
+    statusLabel.grid(row = 6, column = 0, columnspan = 2)
 
     #Passes userName and password for use during the scraping
-    tk.Button(text="Exporteer appie rooster", command=lambda:syncCalendar(userNameEntry, passwordEntry, statusLabel, monthsToGoBack)).grid(row = 4, column = 0, columnspan= 2)
+    tk.Button(text="Exporteer appie rooster", command=lambda:syncCalendar(userNameEntry, passwordEntry, statusLabel, monthsToGoBack, deleteSavedTimes)).grid(row = 5, column = 0, columnspan= 2)
 
 def popup(message):
     popupScreen = tk.Toplevel()
@@ -250,6 +294,7 @@ def Statistics():
     tk.Label(text="Statistieken").grid(row = 0, column = 1)
 
     totalTime = 0
+    payoutTime = 0
     timeData = {}
     for item in data["savedTimes"]:
         dateTimeDifference = str(datetime(2000, 1, 1, int(item[1].split(" ")[1].split(":")[0]), int(item[1].split(" ")[1].split(":")[1]), 0) - datetime(2000, 1, 1, int(item[0].split(" ")[1].split(":")[0]), int(item[0].split(" ")[1].split(":")[1]), 0))
@@ -261,12 +306,21 @@ def Statistics():
         else:
              timeData[item[0].split("-")[0]][item[0].split("-")[1]] += minuteDifference / 60
         totalTime += minuteDifference / 60
+        #print(int(item[0].split("-")[2][0:1]))
+        print(datetime(int(item[0].split("-")[0]), int(item[0].split("-")[1]), int(item[0].split("-")[2][0:2])))
+        if datetime(int(item[0].split("-")[0]), int(item[0].split("-")[1]), int(item[0].split("-")[2][0:2])).weekday() == 6:
+            payoutTime += minuteDifference / 60.0 * 1.5
+        else:
+            payoutTime += minuteDifference / 60.0
     print(timeData)
 
     tk.Label(text="Totaal gewerkte uren: " + str(totalTime)).grid(row = 1, column = 0, columnspan = 2)
-    #tk.Label(text="Totaal uitbetaalde uren: ")
+    tk.Label(text="Totaal uitbetaalde uren: " + str(payoutTime)).grid(row = 2, column = 0, columnspan = 2)
+    tk.Label(text="Totaal verdient (ongeveer): " + str(payoutTime * 6.84)).grid(row = 3, column = 0, columnspan = 2)
 
-    tk.Button(text="uur grafiek", command=lambda:showWorkGraph(timeData)).grid(row = 2, column = 0)
+    tk.Button(text="Uur gewerkt per maand", command=lambda:showWorkGraph(timeData)).grid(row = 4, column = 0, columnspan = 2)
+    tk.Button(text="Uur gewerkt per uitbetaal periode").grid(row = 5, column = 0, columnspan = 2)
+    tk.Button(text="Change payout settings").grid(row = 6, column = 0, columnspan=2)
 
 def showWorkGraph(timeData):
     import matplotlib.pyplot as plt
@@ -290,15 +344,81 @@ def showWorkGraph(timeData):
     plt.plot(xAxis,yAxis, color='maroon', marker='o')
     plt.show()
 
+def saveEdittedTimes(data, dateList, sortedDateList, beginTimeEntryList, endTimeEntryList):
+    for counter, item in enumerate(sortedDateList):
+        beginTimeList = [int(beginTimeEntryList[counter].get().split(":")[0]), int(beginTimeEntryList[counter].get().split(":")[1])]
+        endTimeList = [int(endTimeEntryList[counter].get().split(":")[0]), int(endTimeEntryList[counter].get().split(":")[1])]
+        data["savedTimes"][dateList.index(item)] =[str(datetime(int(item.split("-")[0]), int(item.split("-")[1]), int(item.split("-")[2]), beginTimeList[0], beginTimeList[1])), str(datetime(int(item.split("-")[0]), int(item.split("-")[1]), int(item.split("-")[2]), endTimeList[0], endTimeList[1]))]
+    
+    saveData(data)
+
+def exportOldTimes(data, dateList, sortedDateList, syncToggleList):
+    exportDates = []
+    for counter, item in enumerate(sortedDateList):
+        if syncToggleList[counter].get() == 1:
+            print(data["savedTimes"][dateList.index(item)])
+            newDatetime = []
+            newDate = data["savedTimes"][dateList.index(item)][0].split(" ")[0]
+            beginTime = data["savedTimes"][dateList.index(item)][0].split(" ")[1]
+            endTime = data["savedTimes"][dateList.index(item)][1].split(" ")[1]
+            newDatetime.append(datetime(int(newDate.split("-")[0]), int(newDate.split("-")[1]), int(newDate.split("-")[2]), int(beginTime.split(":")[0]), int(beginTime.split(":")[1])))
+            newDatetime.append(datetime(int(newDate.split("-")[0]), int(newDate.split("-")[1]), int(newDate.split("-")[2]), int(endTime.split(":")[0]), int(endTime.split(":")[1])))
+            exportDates.append(newDatetime)
+    exportToIcalendar(exportDates)
+
+def editWorkTimes():
+    clearScreen()
+
+    tk.Button(text="Terug", command=mainScreen).grid(row = 0, column = 0)
+    tk.Label(text="Zelf werktijd(en) invullen").grid(row = 0, column = 1)
+
+    workTimeFrame = ScrollableFrame(screen, 0, [500, 750])
+    workTimeFrame.grid(row = 1, column = 0, columnspan=2)
+    data = importData()
+    dateList = []
+    beginTimeList = []
+    endTimeList = []
+    for item in data["savedTimes"]:
+        dateList.append(item[0].split(" ")[0])
+        beginTimeList.append(item[0].split(" ")[1])
+        print(item)
+        endTimeList.append(item[1].split(" ")[1])
+    
+    print(beginTimeList)
+    print(endTimeList)
+
+    sortedDateList = dateList.copy()
+    sortedDateList.sort()
+    sortedDateList.reverse()
+    
+    beginTimeEntryList = []
+    endTimeEntryList = []
+    syncToggleList = []
+
+    for counter, item in enumerate(sortedDateList):
+        tk.Label(workTimeFrame.scrollable_frame, text = item).grid(row = counter, column = 0)
+        beginTimeEntryList.append(tk.Entry(workTimeFrame.scrollable_frame))
+        beginTimeEntryList[-1].grid(row = counter, column = 1)
+        beginTimeEntryList[-1].insert(0, beginTimeList[dateList.index(item)])
+        endTimeEntryList.append(tk.Entry(workTimeFrame.scrollable_frame))
+        endTimeEntryList[-1].grid(row = counter, column = 2)
+        endTimeEntryList[-1].insert(0, endTimeList[dateList.index(item)])
+        syncToggleList.append(tk.IntVar())
+        tk.Checkbutton(workTimeFrame.scrollable_frame, variable=syncToggleList[-1]).grid(row = counter, column = 3)
+    
+    tk.Button(text="Save", command=lambda:saveEdittedTimes(data, dateList, sortedDateList, beginTimeEntryList, endTimeEntryList)).grid(row = 2, column = 0)
+    tk.Button(text = "Exporteer gekozen tijden naar calender", command = lambda:exportOldTimes(data, dateList, sortedDateList, syncToggleList)).grid(row = 2, column = 1)
+
 def mainScreen():
     #Initiate main menu GUI
     clearScreen()
     tk.Button(text="Automatisch rooster ophalen", command=lambda:syncCalendarGUI()).pack()
     tk.Button(text="Zelf werktijd(en) invullen", command=lambda:manuallyAddWorkTime()).pack()
+    tk.Button(text="Wijzig werktijden", command=lambda:editWorkTimes()).pack()
     tk.Button(text="Statistieken", command=lambda:Statistics()).pack()
 
 screen = tk.Tk()
-screen.title("Appie to Calendar V0.4")
+screen.title("Appie to Calendar V0.5")
 screen.resizable(False, False) 
 mainScreen()
 screen.mainloop()
