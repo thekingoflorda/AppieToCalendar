@@ -1,13 +1,11 @@
 #Time/calendar imports
 from dataclasses import dataclass
-import enum
-from itertools import count
 from re import I
-import string
-from tokenize import String
 from turtle import clear
-from icalendar import Calendar, Event
-from datetime import date, datetime
+from icalendar import Calendar, Event, Alarm
+from datetime import datetime
+from datetime import timedelta
+import matplotlib.pyplot as plt
 
 #Webscraping imports
 from selenium import webdriver
@@ -66,6 +64,11 @@ def exportToIcalendar(items):
         event.add('summary', 'Werken bij AH')
         event.add('dtstart', i[0])
         event.add('dtend', i[1])
+
+        alarm = Alarm()
+        alarm.add('action', 'DISPLAY')
+        alarm.add('trigger', timedelta(days=-1))
+        event.add_component(alarm)
         cal.add_component(event)
 
     #Exports Icalendar file
@@ -130,8 +133,6 @@ def syncCalendar(userName, password, statusLabel, monthsToGoBack, deleteSavedTim
             newItem.append(datetime(datetime.now().year, datetime.now().month, int(item.text.split("\n")[0]), int(parsedTime.split(":")[0]), int(parsedTime.split(":")[1])))
             parsedTime = item.text.split("\n")[1].split("-")[1].replace(")", "")
             newItem.append(datetime(datetime.now().year, datetime.now().month, int(item.text.split("\n")[0]), int(parsedTime.split(":")[0]), int(parsedTime.split(":")[1])))
-            if [str(newItem[0]), str(newItem[1])] not in data["savedTimes"]:
-                newItems.append(newItem)
     print("Scan completed")
     
     oldTimes = []
@@ -149,14 +150,18 @@ def syncCalendar(userName, password, statusLabel, monthsToGoBack, deleteSavedTim
                         parsedTime = item.text.split("\n")[1].split("-")[1].replace(")", "")
                         newItem.append(datetime(datetime.now().year, 1, int(item.text.split("\n")[0]), int(parsedTime.split(":")[0]), int(parsedTime.split(":")[1])) + relativedelta(months = datetime.now().month - i - 1))
                         if [str(newItem[0]), str(newItem[1])] not in data["savedTimes"]:
+                            for date in data["savedTimes"]:
+                                if date[0] == str(newItem[0]):
+                                    del data["savedTimes"][data["savedTimes"].index(date)]
                             oldTimes.append(newItem)
                 driver.find_element(By.XPATH, "/html/body/form/table/tbody/tr[2]/td/table/tbody/tr/td[1]/table/tbody/tr").click()
             
             for i in range(int(monthsToGoBack.get()) + 1):
                 driver.find_element(By.XPATH, "/html/body/form/table/tbody/tr[2]/td/table/tbody/tr/td[2]/table/tbody/tr/td[2]/span").click()
-        else:
+        else: 
             popup(monthsToGoBack.get() + " is niet een correct getal.")
-    except ValueError:
+    except ValueError as e:
+        print(e)
         popup(monthsToGoBack.get() + " is niet een correct getal.")
 
     #Pushes button to go to next month
@@ -285,12 +290,16 @@ def manuallyAddWorkTime():
 
     tk.Button(text="Exporteer nieuwe tijden naar agenda", command=lambda:exportToIcalendar(newData)).grid(row = 6, column = 0, columnspan=2)
 
+def closeGraphAndReturn():
+    plt.close()
+    mainScreen()
+
 def Statistics():
     clearScreen()
 
     data = importData()
 
-    tk.Button(text="Terug", command=mainScreen).grid(row = 0, column = 0)
+    tk.Button(text="Terug", command=closeGraphAndReturn).grid(row = 0, column = 0)
     tk.Label(text="Statistieken").grid(row = 0, column = 1)
 
     totalTime = 0
@@ -323,8 +332,6 @@ def Statistics():
     tk.Button(text="Change payout settings").grid(row = 6, column = 0, columnspan=2)
 
 def showWorkGraph(timeData):
-    import matplotlib.pyplot as plt
-
     yearList = list(timeData.keys())
     yearList.sort()
 
@@ -365,6 +372,16 @@ def exportOldTimes(data, dateList, sortedDateList, syncToggleList):
             newDatetime.append(datetime(int(newDate.split("-")[0]), int(newDate.split("-")[1]), int(newDate.split("-")[2]), int(endTime.split(":")[0]), int(endTime.split(":")[1])))
             exportDates.append(newDatetime)
     exportToIcalendar(exportDates)
+
+def deleteTimes(data, dateList, sortedDateList, syncToggleList):
+    newData = data.copy()
+    for counter, item in enumerate(sortedDateList):
+        if syncToggleList[counter].get() == 1:
+            del newData["savedTimes"][dateList.index(item)]
+    
+    saveData(newData)
+    clearScreen()
+    editWorkTimes()
 
 def editWorkTimes():
     clearScreen()
@@ -408,6 +425,21 @@ def editWorkTimes():
     
     tk.Button(text="Save", command=lambda:saveEdittedTimes(data, dateList, sortedDateList, beginTimeEntryList, endTimeEntryList)).grid(row = 2, column = 0)
     tk.Button(text = "Exporteer gekozen tijden naar calender", command = lambda:exportOldTimes(data, dateList, sortedDateList, syncToggleList)).grid(row = 2, column = 1)
+    tk.Button(text = "Verwijder gekozen tijden", command = lambda: deleteTimes(data, dateList, sortedDateList, syncToggleList)).grid(row = 3, column= 1)
+
+def newUser(newUser):
+    print(newUser)
+
+def settings():
+    clearScreen()
+
+    tk.Button(text="Terug", command=mainScreen).grid(row = 0, column = 0)
+    tk.Label(text="Settings").grid(row = 0, column = 1)
+
+    tk.Label(text="Naam gebruiker: ").grid(row = 1, column = 0)
+    newUserNameEntry = tk.Entry()
+    newUserNameEntry.grid(row = 1, column = 1)
+    tk.Button(text="Voeg nieuwe gebruiker toe", command=lambda:newUser(newUserNameEntry.get())).grid(row = 2, column = 0, columnspan=2)
 
 def mainScreen():
     #Initiate main menu GUI
@@ -416,9 +448,10 @@ def mainScreen():
     tk.Button(text="Zelf werktijd(en) invullen", command=lambda:manuallyAddWorkTime()).pack()
     tk.Button(text="Wijzig werktijden", command=lambda:editWorkTimes()).pack()
     tk.Button(text="Statistieken", command=lambda:Statistics()).pack()
+    tk.Button(text="Settings", command=lambda:settings()).pack()
 
 screen = tk.Tk()
-screen.title("Appie to Calendar V0.5")
+screen.title("Appie to Calendar V0.6")
 screen.resizable(False, False) 
 mainScreen()
 screen.mainloop()
